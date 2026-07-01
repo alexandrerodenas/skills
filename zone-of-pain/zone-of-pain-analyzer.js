@@ -427,6 +427,8 @@ function computeTemporalCoupling(sortedChurn, topN = 5) {
   console.log("  Tracking %d source files across all commits.", allSourceSet.size);
 
   try {
+    const srcNorm = norm(allSrcDir);
+
     // Use hash directly as separator — %H outputs exactly 40 hex chars
     // Each commit section: hash line, then file lines, then blank, then next hash
     const raw = execSync(
@@ -458,7 +460,9 @@ function computeTemporalCoupling(sortedChurn, topN = 5) {
 
       const f = trimmed;
       if (!f) continue;
-      const n = norm(f);
+      const rel = norm(f);
+      if (!rel.startsWith(srcNorm)) continue;
+      const n = rel.substring(srcNorm.length).replace(/^\//, "");
       // Only track non-test source files
       if (allSourceSet.has(n)) {
         currentFiles.push(n);
