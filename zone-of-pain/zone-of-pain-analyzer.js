@@ -31,7 +31,8 @@ const EXCLUDE_FILES = new Set([
 
 const SOURCE_EXT = new Set([".java", ".js", ".jsx", ".ts", ".tsx", ".py", ".cs", ".go", ".rb", ".rs", ".kt", ".kts"]);
 
-const SRC_DIRS = ["src/main/java", "src/main/ts", "src/main/js", "src", "lib", "app", "packages"];
+// Source dir patterns — discovered recursively at any depth
+const SRC_PATTERNS = ["src/main/java", "src/main/ts", "src/main/js", "src", "lib", "app", "packages"];
 
 // ──────────────────────────────────────────────────────────────
 // HELPER FUNCTIONS
@@ -175,7 +176,7 @@ function shouldSkipExternalImport(token, lang) {
 // STEP 1: GIT CHURN — Pure Node.js
 // ──────────────────────────────────────────────────────────────
 
-function computeChurn(srcDir) {
+function computeChurn(srcDirs) {
   console.log("\n📈 [Step 1/4] Computing git churn...");
 
   try {
@@ -184,17 +185,20 @@ function computeChurn(srcDir) {
       maxBuffer: 100 * 1024 * 1024,
     });
 
+    const srcNorms = srcDirs.map(d => norm(d));
     const counts = new Map();
     for (const line of raw.split("\n")) {
       const f = line.trim();
       if (!f) continue;
       const rel = norm(f);
-      // Strip srcDir prefix to match step 2 (produces paths like fr/laposte/...)
-      const srcNorm = norm(srcDir);
-      if (!rel.startsWith(srcNorm)) continue;
-      const inner = rel.substring(srcNorm.length).replace(/^\//, "");
-      if (isSourceFile(inner) && !isTestFile(inner)) {
-        counts.set(inner, (counts.get(inner) || 0) + 1);
+      for (const srcNorm of srcNorms) {
+        if (rel.startsWith(srcNorm)) {
+          const inner = rel.substring(srcNorm.length).replace(/^\//, "");
+          if (isSourceFile(inner) && !isTestFile(inner)) {
+            counts.set(inner, (counts.get(inner) || 0) + 1);
+          }
+          break;
+        }
       }
     }
 
@@ -214,31 +218,32 @@ function computeChurn(srcDir) {
 // STEP 2: STATIC IMPORT ANALYSIS — Java FQN -> Path
 // ──────────────────────────────────────────────────────────────
 
-function computeCoupling(srcDir) {
+function computeCoupling(srcDirs) {
   console.log("\n🔗 [Step 2/4] Analyzing static imports & coupling...");
 
-  // Discover all source files (including tests for scanning imports, but only non-test for coupling targets)
-  // Store full paths from project root to match sortedChurn
+  // Discover all source files across all source directories
   const allSourceFiles = new Set();
   const sourceFiles = new Set();
 
-  function walk(dir) {
+  function walk(dir, baseDir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (EXCLUDE_DIRS.has(entry.name)) continue;
-        walk(full);
+        walk(full, baseDir);
         continue;
       }
       if (!entry.isFile() || !isSourceFile(full)) continue;
-      const rel = norm(path.relative(srcDir, full));
+      const rel = norm(path.relative(baseDir, full));
       allSourceFiles.add(rel);
       if (!isTestFile(rel)) {
         sourceFiles.add(rel);
       }
     }
   }
-  walk(srcDir);
+  for (const sd of srcDirs) {
+    walk(sd, sd);
+  }
   console.log("  Discovered %d source files (%d non-test).", allSourceFiles.size, sourceFiles.size);
 
   // Build reverse import map: source_file -> Set of files it imports
@@ -281,16 +286,20 @@ function computeCoupling(srcDir) {
     return null;
   }
 
-  // Parse imports from each non-test source file
+  // Parse imports from each source file — try all source dirs to find it
   let importStats = { totalLines: 0, matchingImports: 0, resolvedImports: 0 };
   for (const filePath of allSourceFiles) {
-    const full = path.join(srcDir, filePath.replace(/\//g, path.sep));
     let content;
-    try {
-      content = fs.readFileSync(full, "utf-8");
-    } catch {
-      continue;
+    let found = false;
+    for (const sd of srcDirs) {
+      const full = path.join(sd, filePath.replace(/\//g, path.sep));
+      try {
+        content = fs.readFileSync(full, "utf-8");
+        found = true;
+        break;
+      } catch { /* try next src dir */ }
     }
+    if (!found) continue;
 
     const lang = langForFile(filePath);
 
@@ -400,34 +409,36 @@ function computeTemporalCoupling(sortedChurn, topN = 5) {
   const tSet = new Set(targets);
 
   // Also collect all non-test source files that might appear with targets
-  const allSrcDir = findSrcDir();
-  if (!allSrcDir) {
+  const tSrcDirs = findAllSrcDirs();
+  if (!tSrcDirs) {
     console.log("  ⚠️  Could not find source directory.");
     return "";
   }
 
   const allSourceSet = new Set();
-  function walkAll(dir) {
+  function walkAll(dir, baseDir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (EXCLUDE_DIRS.has(entry.name)) continue;
-        walkAll(full);
+        walkAll(full, baseDir);
         continue;
       }
       if (!entry.isFile()) continue;
-      const rel = norm(path.relative(allSrcDir, full));
+      const rel = norm(path.relative(baseDir, full));
       if (isSourceFile(rel) && !isTestFile(rel)) {
         allSourceSet.add(rel);
       }
     }
   }
-  walkAll(allSrcDir);
+  for (const sd of tSrcDirs) {
+    walkAll(sd, sd);
+  }
 
   console.log("  Tracking %d source files across all commits.", allSourceSet.size);
 
   try {
-    const srcNorm = norm(allSrcDir);
+    const srcNorms = tSrcDirs.map(d => norm(d));
 
     // Use hash directly as separator — %H outputs exactly 40 hex chars
     // Each commit section: hash line, then file lines, then blank, then next hash
@@ -461,8 +472,16 @@ function computeTemporalCoupling(sortedChurn, topN = 5) {
       const f = trimmed;
       if (!f) continue;
       const rel = norm(f);
-      if (!rel.startsWith(srcNorm)) continue;
-      const n = rel.substring(srcNorm.length).replace(/^\//, "");
+      let matched = false;
+      let n = "";
+      for (const sn of srcNorms) {
+        if (rel.startsWith(sn)) {
+          n = rel.substring(sn.length).replace(/^\//, "");
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) continue;
       // Only track non-test source files
       if (allSourceSet.has(n)) {
         currentFiles.push(n);
@@ -533,31 +552,50 @@ function computeTemporalCoupling(sortedChurn, topN = 5) {
 // MAIN
 // ──────────────────────────────────────────────────────────────
 
-function findSrcDir() {
-  for (const d of SRC_DIRS) {
-    if (fs.existsSync(d) && fs.statSync(d).isDirectory()) return d;
+function findAllSrcDirs() {
+  const found = [];
+  const root = process.cwd();
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (EXCLUDE_DIRS.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      const relPath = norm(path.relative(root, fullPath));
+      if (SRC_PATTERNS.some(p => relPath === p || relPath.endsWith("/" + p))) {
+        found.push(relPath);
+      }
+      walk(fullPath);
+    }
   }
-  return null;
+  walk(root);
+  // Remove parent dirs when a more specific subdir is present (e.g. keep src/main/java, drop src)
+  const filtered = found.filter(f =>
+    !found.some(other => other !== f && other.startsWith(f + "/"))
+  );
+  return filtered.length > 0 ? filtered : null;
 }
 
 function main() {
   console.log(
     "\n" +
     "╔═══════════════════════════════════════════════════════════════╗\n" +
-    "║  ZONE-OF-PAIN ANALYZER v3 — Fixed paths, tests, temp coupling║\n" +
+    "║  ZONE-OF-PAIN ANALYZER v3 — Multi-module discovery           ║\n" +
     "║  Run: node zone-of-pain-analyzer.js                           ║\n" +
     "╚═══════════════════════════════════════════════════════════════╝\n"
   );
 
-  const srcDir = findSrcDir();
-  if (!srcDir) {
+  const srcDirs = findAllSrcDirs();
+  if (!srcDirs) {
     console.error("\n❌ No source directory found. Run from your project root.");
     process.exit(1);
   }
-  console.log(`  Source directory: ${srcDir}\n`);
+  console.log(`  Found ${srcDirs.length} source directories:`);
+  for (const sd of srcDirs) {
+    console.log(`    ${sd}`);
+  }
 
   // Step 1: Churn
-  const sortedChurn = computeChurn(srcDir);
+  const sortedChurn = computeChurn(srcDirs);
   if (sortedChurn.length === 0) {
     console.error("\n❌ No churn data found. Is this a git repository?");
     process.exit(1);
@@ -568,7 +606,7 @@ function main() {
   }
 
   // Step 2: Coupling
-  const { importMap, incomingCount } = computeCoupling(srcDir);
+  const { importMap, incomingCount } = computeCoupling(srcDirs);
 
   // Step 3: Pain zones
   const painZones = computePainZones(sortedChurn, incomingCount);
@@ -597,24 +635,9 @@ function main() {
   console.log("  ✅ Analysis complete.");
   console.log("=".repeat(72) + "\n");
 
-  // Write to file (use srcDir prefix for all paths)
+  // Write report — paths are already relative to each source root
   const outputFile = path.join(process.cwd(), "zone-of-pain.md");
-  const prefix = srcDir + "/";
-  const fixedTableMd = tableMd.replace(/`((?!src\/)[^`]+)`/g, (match, filepath) => {
-    // If path doesn't already start with src/, prefix it
-    if (!filepath.startsWith("src/")) {
-      return "`" + prefix + filepath + "`";
-    }
-    return match;
-  });
-  const fixedTemporalMd = temporalMd.replace(/`((?!src\/)[^`]+)`/g, (match, filepath) => {
-    if (!filepath.startsWith("src/")) {
-      return "`" + prefix + filepath + "`";
-    }
-    return match;
-  });
-
-  const fullMd = `# Zone of Pain - Architecture Analysis\n${fixedTableMd}\n${fixedTemporalMd}`;
+  const fullMd = `# Zone of Pain - Architecture Analysis\n${tableMd}\n${temporalMd}`;
   fs.writeFileSync(outputFile, fullMd, "utf-8");
   console.log(`  Report saved to: ${outputFile}\n`);
 }
