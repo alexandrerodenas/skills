@@ -67,6 +67,110 @@ function isTestFile(filePath) {
 
 function norm(f) { return f.replace(/\\/g, "/").replace(/^\.\//, ""); }
 
+function splitPathSegments(filePath) {
+  return norm(filePath).split("/").filter(Boolean);
+}
+
+function stripSourceExtension(filePath) {
+  const ext = path.extname(filePath);
+  return ext ? filePath.slice(0, -ext.length) : filePath;
+}
+
+function buildAliases(filePath) {
+  const normalized = norm(filePath);
+  const withoutExt = stripSourceExtension(normalized);
+  const segments = splitPathSegments(withoutExt);
+  const aliases = new Set();
+
+  for (let i = 0; i < segments.length; i++) {
+    aliases.add(segments.slice(i).join("/"));
+  }
+
+  aliases.add(segments.join("."));
+  aliases.add(segments[segments.length - 1]);
+  aliases.add("./" + segments.join("/"));
+  aliases.add("../" + segments.join("/"));
+  return [...aliases].filter(Boolean);
+}
+
+function langForFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".py") return "python";
+  if (ext === ".go") return "go";
+  if (ext === ".ts" || ext === ".tsx") return "ts";
+  if (ext === ".js" || ext === ".jsx") return "js";
+  if (ext === ".rb") return "rb";
+  if (ext === ".cs") return "cs";
+  return "generic";
+}
+
+function extractImportCandidates(line, lang) {
+  const trimmed = line.trim();
+  const candidates = [];
+
+  let m = trimmed.match(/^import\s+(?:static\s+)?([\w.\/]+)/);
+  if (m) candidates.push(m[1]);
+
+  m = trimmed.match(/^from\s+([\w.\/]+)\s+import\s+/);
+  if (m) candidates.push(m[1]);
+
+  m = trimmed.match(/^using\s+([\w.\/]+)\s*;/);
+  if (m) candidates.push(m[1]);
+
+  if (lang === "go") {
+    m = trimmed.match(/^import\s+\"([^\"]+)\"/);
+    if (m) candidates.push(m[1]);
+    m = trimmed.match(/^\"([^\"]+)\"$/);
+    if (m) candidates.push(m[1]);
+  }
+
+  if (lang === "ts" || lang === "js") {
+    m = trimmed.match(/^(?:import|export)\s+.*?from\s+["']([^"']+)["']/);
+    if (m) candidates.push(m[1]);
+    m = trimmed.match(/^import\s+["']([^"']+)["']/);
+    if (m) candidates.push(m[1]);
+    m = trimmed.match(/^require\(["']([^"']+)["']\)/);
+    if (m) candidates.push(m[1]);
+  }
+
+  if (lang === "rb") {
+    m = trimmed.match(/^require(?:_relative)?\s+["']([^"']+)["']/);
+    if (m) candidates.push(m[1]);
+    m = trimmed.match(/^autoload\s+:[\w?]+,\s+["']([^"']+)["']/);
+    if (m) candidates.push(m[1]);
+  }
+
+  if (lang === "cs") {
+    m = trimmed.match(/^using\s+([A-Za-z0-9_.]+)\s*;/);
+    if (m) candidates.push(m[1]);
+    m = trimmed.match(/^global\s+using\s+([A-Za-z0-9_.]+)\s*;/);
+    if (m) candidates.push(m[1]);
+  }
+
+  return candidates;
+}
+
+function shouldSkipExternalImport(token, lang) {
+  const common = [
+    "typing", "collections", "dataclasses", "contextlib", "pathlib", "asyncio",
+    "os", "sys", "re", "json", "time", "datetime", "math", "uuid", "base64",
+    "logging", "itertools", "urllib", "functools", "inspect", "subprocess",
+  ];
+  const javaLike = [
+    "java.", "javax.", "jakarta.", "org.xml.", "org.slf4j.", "ch.qos.logback.",
+    "com.fasterxml.", "org.apache.", "org.springframework.", "org.hibernate.",
+  ];
+  const cs = ["System.", "Microsoft.", "Newtonsoft."];
+  const ruby = ["json", "yaml", "set", "open-uri", "net/http", "logger"];
+
+  const prefixes = [...common];
+  if (lang === "cs") prefixes.push(...cs);
+  if (lang === "rb") prefixes.push(...ruby);
+  if (lang === "java" || lang === "generic") prefixes.push(...javaLike);
+
+  return prefixes.some((prefix) => token === prefix || token.startsWith(prefix + ".") || token.startsWith(prefix + "/"));
+}
+
 // ──────────────────────────────────────────────────────────────
 // STEP 1: GIT CHURN — Pure Node.js
 // ──────────────────────────────────────────────────────────────
@@ -146,14 +250,34 @@ function computeCoupling(srcDir) {
   const incomingCount = {};
   sourceFiles.forEach((f) => { incomingCount[f] = 0; });
 
-  // Resolve Java FQN to known file path under srcDir
-  function resolveJavaImport(fqn) {
-    const parts = fqn.split(".");
-    if (parts.length < 2) return null;
-    for (let n = parts.length; n >= 2; n--) {
-      const trial = parts.slice(-n).join("/") + ".java";
-      if (allSourceFiles.has(trial)) return trial;
+  const aliasToFile = new Map();
+  for (const filePath of allSourceFiles) {
+    for (const alias of buildAliases(filePath)) {
+      if (!aliasToFile.has(alias)) aliasToFile.set(alias, filePath);
     }
+  }
+
+  function resolveImport(token, currentFile) {
+    const normalized = token.replace(/::/g, "/");
+    const dotNormalized = token.replace(/\./g, "/");
+    const candidates = new Set([token, normalized, dotNormalized, stripSourceExtension(normalized), stripSourceExtension(dotNormalized)]);
+
+    const currentDir = path.posix.dirname(currentFile);
+    if (token.startsWith(".") || token.startsWith("/")) {
+      const rel = norm(path.posix.join(currentDir, token));
+      candidates.add(rel);
+      candidates.add(stripSourceExtension(rel));
+    }
+
+    for (const candidate of [...candidates]) {
+      if (aliasToFile.has(candidate)) return aliasToFile.get(candidate);
+      const parts = splitPathSegments(candidate);
+      for (let i = 0; i < parts.length; i++) {
+        const suffix = parts.slice(i).join("/");
+        if (aliasToFile.has(suffix)) return aliasToFile.get(suffix);
+      }
+    }
+
     return null;
   }
 
@@ -168,40 +292,27 @@ function computeCoupling(srcDir) {
       continue;
     }
 
+    const lang = langForFile(filePath);
+
     const lines = content.split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
       importStats.totalLines++;
 
-      // Match "import foo.bar.Baz;" (ignore * imports)
-      const m = trimmed.match(/^import\s+(?!\*)(?:static\s+)?([\w.]+)\s*;/);
-      if (!m) continue;
+      const candidates = extractImportCandidates(trimmed, lang);
+      if (candidates.length === 0) continue;
 
-      importStats.matchingImports++;
-      const fqn = m[1].trim();
+      for (const rawToken of candidates) {
+        importStats.matchingImports++;
+        if (shouldSkipExternalImport(rawToken, lang)) continue;
 
-      // Skip external/standard library imports
-      if (
-        fqn.startsWith("java.") ||
-        fqn.startsWith("javax.") ||
-        fqn.startsWith("org.xml.") ||
-        fqn.startsWith("org.slf4j.") ||
-        fqn.startsWith("ch.qos.logback.") ||
-        fqn.startsWith("com.fasterxml.") ||
-        fqn.startsWith("org.apache.") ||
-        fqn.startsWith("org.springframework.") ||
-        fqn.startsWith("org.hibernate.") ||
-        fqn.startsWith("jakarta.") ||
-        fqn.startsWith("javax.")
-      ) continue;
-
-      const target = resolveJavaImport(fqn, allSourceFiles);
-      if (target && sourceFiles.has(target)) {
-        // Record: sourceFile imports target
-        importMap[filePath] = importMap[filePath] || new Set();
-        importMap[filePath].add(target);
-        incomingCount[target]++;
-        importStats.resolvedImports++;
+        const target = resolveImport(rawToken, filePath);
+        if (target && sourceFiles.has(target)) {
+          importMap[filePath] = importMap[filePath] || new Set();
+          importMap[filePath].add(target);
+          incomingCount[target]++;
+          importStats.resolvedImports++;
+        }
       }
     }
   }

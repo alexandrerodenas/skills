@@ -26,7 +26,7 @@ node zone-of-pain-analyzer.js
 - Number of files with incoming internal imports.
 - Top 5 files by Pain score with churn and coupling.
 - Whether temporal coupling produced usable results.
-- Path to the generated report: `zone-of-pain.md`.
+- Generated report file: `zone-of-pain.md`.
 
 ## Output style
 
