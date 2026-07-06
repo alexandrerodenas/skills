@@ -1,0 +1,63 @@
+name: Validate Skills
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '*/SKILL.md'
+      - '.github/workflows/*'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '*/SKILL.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate SKILL.md files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate all skills
+        run: |
+          ERRORS=0
+          for skill_dir in */; do
+            skill_name=$(basename "$skill_dir")
+            skill_file="${skill_dir}SKILL.md"
+
+            if [[ ! -f "$skill_file" ]]; then
+              continue
+            fi
+
+            if ! grep -q "^---" "$skill_file" 2>/dev/null; then
+              echo "::error::$skill_name - Missing YAML frontmatter (---)"
+              ERRORS=$((ERRORS + 1))
+              continue
+            fi
+
+            if ! grep -q "^name:" "$skill_file" 2>/dev/null; then
+              echo "::error::$skill_name - Missing 'name' field in frontmatter"
+              ERRORS=$((ERRORS + 1))
+              continue
+            fi
+
+            if ! grep -q "^description:" "$skill_file" 2>/dev/null; then
+              echo "::error::$skill_name - Missing 'description' field in frontmatter"
+              ERRORS=$((ERRORS + 1))
+              continue
+            fi
+
+            echo "::notice::$skill_name - Valid"
+          done
+
+          total=$(ls -1d */ 2>/dev/null | wc -l)
+          echo "Total directories: $total"
+
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "::error::$ERRORS skill(s) failed validation"
+            exit 1
+          fi
+
+          echo "All skills validated successfully"

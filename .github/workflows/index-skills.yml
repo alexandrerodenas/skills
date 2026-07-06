@@ -1,0 +1,49 @@
+name: Index Skills on skills.sh
+
+on:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      force_reindex:
+        description: 'Force re-index all skills'
+        type: boolean
+        default: false
+
+jobs:
+  index:
+    name: Index skills on skills.sh
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install all skills (trigger skills.sh telemetry)
+        run: |
+          echo "Installing skills to trigger telemetry-based indexing..."
+          npx skills@latest add "${{ github.repository }}" --all --yes
+          echo "Skills installed and indexed on skills.sh"
+
+      - name: List discovered skills
+        run: |
+          echo "Skills in repository:"
+          for skill_dir in */; do
+            if [[ -f "${skill_dir}SKILL.md" ]]; then
+              name=$(grep "^name:" "${skill_dir}SKILL.md" 2>/dev/null | head -1 | sed 's/^name: *//')
+              desc=$(grep "^description:" "${skill_dir}SKILL.md" 2>/dev/null | head -1 | sed 's/^description: *//')
+              echo "  - $(basename "$skill_dir"): $name - $desc"
+            fi
+          done
+
+      - name: Summary
+        run: |
+          total=$(ls -1d */ 2>/dev/null | wc -l)
+          echo "Indexed $total skills for skills.sh"
+          echo "View at: https://skills.sh/${{ github.repository_owner }}/${{ github.event.repository.name }}"
