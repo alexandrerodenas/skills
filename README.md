@@ -1,11 +1,15 @@
 # Skills
 
-Collection of reusable capabilities for AI coding agents — covering code quality, architecture analysis, and engineering best practices.
+Collection of reusable capabilities for AI coding agents — covering code quality, architecture analysis, and engineering best practices. The skills come from [The Code Clinic](https://github.com/alexandrerodenas/la-clinique-du-code).
 
 ```
 skills-repo/
-├── code-therapy/      # Clean code principles, code smells, refactoring techniques, design patterns
-├── zone-of-pain/      # Architecture hotspot analysis — churn, coupling, temporal coupling
+├── code-therapist/         # Code review, refactoring and architecture analysis
+├── intensive-care/         # Intensive care protocol: fixes critical and important findings only
+├── nutritionist/           # Detects dead code, speculation (YAGNI) and over-engineering
+├── surgeon/                # Executes a validated prescription, verifying each operation
+├── test-diagnostician/     # Unit test quality, relevance and maintainability review
+├── zone-of-pain/           # Architecture hotspots from git history (churn, coupling, temporal coupling)
 ├── scripts/
 │   └── validate-skills.sh
 └── README.md
@@ -15,8 +19,12 @@ skills-repo/
 
 | Skill | Description |
 |-------|-------------|
-| [code-therapy](./code-therapy/) | Expert in clean code principles, code smells, refactoring techniques, and design patterns. Use when the user asks about code quality, SOLID, GRASP, DRY, architecture, or wants to analyze/refactor code. |
-| [zone-of-pain](./zone-of-pain/) | Use when the user asks for churn, coupling, temporal coupling, architecture hotspots, or "zone of pain" analysis in this repository. |
+| [code-therapist](./code-therapist/) | Expert code review, refactoring, and architecture analysis grounded in pragmatic clean code principles. Use when analyzing code quality, suggesting refactors, reviewing architecture, or explaining clean code concepts. |
+| [intensive-care](./intensive-care/) | Portable intensive care protocol. Operates only on critical and important findings, then stops when none remain. |
+| [nutritionist](./nutritionist/) | Verifies that code is necessary: dead code, speculation (YAGNI), over-engineering and over-sizing compared to real uses. |
+| [surgeon](./surgeon/) | Executes only a validated prescription and verifies each operation. |
+| [test-diagnostician](./test-diagnostician/) | Evaluation criteria and checklist for post-development unit test reviews. Use when reviewing test quality, relevance, and maintainability. |
+| [zone-of-pain](./zone-of-pain/) | Runs and interprets architecture hotspot analysis (churn, coupling, temporal coupling, risky files) from git history. Use when the user asks for zone of pain, hotspots, churn, coupling, or refactoring prioritization based on git history and dependencies. |
 
 ## Installation
 
@@ -28,8 +36,10 @@ npx skills@latest add alexandrerodenas/skills
 
 Skills are automatically available once installed. The agent will use them when relevant tasks are detected.
 
-- **Code review & quality**: the agent references `code-therapy` when discussing design principles, refactoring, or patterns
+- **Code review & quality**: the agent references `code-therapist` when discussing design principles, refactoring, or patterns
 - **Architecture analysis**: the agent uses `zone-of-pain` when asked about hotspots or technical debt
+- **Tests & necessity**: `test-diagnostician` reviews unit tests, `nutritionist` flags dead or speculative code
+- **Consultation protocol**: `intensive-care` and `surgeon` handle fixes, limited to validated findings
 
 ## Structure
 

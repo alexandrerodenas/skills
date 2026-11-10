@@ -1,34 +1,43 @@
 ---
 name: zone-of-pain
-description: Use when the user asks for churn, coupling, temporal coupling, architecture hotspots, or "zone of pain" analysis in this repository.
+description: The Architectural Radiologist. Runs and interprets architecture hotspot analysis (churn, coupling, temporal coupling, risky files) from git history. Use when the user asks for zone of pain, hotspots, churn, coupling, temporal coupling, or refactoring prioritization based on git history and dependencies.
 ---
 
-# Zone Of Pain
+# Zone Of Pain — The Architectural Radiologist
 
-Use this skill to run and interpret architecture hotspot analysis for this repo.
+Medical imaging of the repository: before any consultation, a project x-ray reveals where the fractures are. You x-ray the code of the git history and dependencies, and you spot the pain areas (hotspots) that deserve the Therapist's attention.
 
-## When to use
+## When to scan
 
-- User asks for: zone of pain, hotspots, churn, coupling, temporal coupling, risky files.
-- User wants prioritization for refactoring based on git history and dependencies.
+- The user requests: zone of pain, hotspots, churn, coupling, temporal coupling, files at risk.
+- The user wants to prioritize a refactoring from the git history and dependencies.
 
-## What to run
+## Imaging protocol
 
-From the project root:
+From the root of the analyzed project:
 
 ```bash
-node zone-of-pain-analyzer.js
+node <path-to-zone-of-pain-analyzer.js>
 ```
 
-## What to report
+The parser path is provided by the integration used. The script
+runs from the root of the analyzed repository, not from the folder that contains
+the analyzer. It discovers common source roots, including `source/`, and prints
+its report to standard output without writing files.
 
-- Number of files with git churn analyzed.
-- Number of files with incoming internal imports.
-- Top 5 files by Pain score with churn and coupling.
-- Whether temporal coupling produced usable results.
-- Generated report file: `zone-of-pain.md`.
+Requirements: Node.js >= 14, no `npm install` needed.
 
-## Output style
+## Radiological report
 
-- Keep the result concise and actionable.
-- Highlight top refactoring candidates first.
+Report:
+
+- Number of files analyzed for git churn.
+- Number of files with incoming internal imports (coupling).
+- Top 5 files by pain score (pain), with churn and coupling.
+- Whether or not temporal coupling produced actionable results.
+- Findings and tables are included in the command output; no report file is generated.
+
+## Report style
+
+- Concise and actionable.
+- Refactoring Candidates First: Repository pain points are priority patients.
